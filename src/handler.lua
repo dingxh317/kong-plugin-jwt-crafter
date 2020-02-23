@@ -1,8 +1,9 @@
 local singletons = require "kong.singletons"
-local responses = require "kong.tools.responses"
+
 
 local table_insert = table.insert
 local table_concat = table.concat
+local kong = kong
 
 local jwt = require "resty.jwt"
 local cjson = require "cjson"
@@ -17,7 +18,7 @@ function JwtCrafter:new()
 end
 
 local function fetch_acls(consumer_id)
-  local results, err = singletons.dao.acls:find_all {consumer_id = consumer_id}
+  local results, err = kong.db.acls:select_by_key(consumer_id)
   if err then
     return nil, err
   end
@@ -26,7 +27,7 @@ end
 
 local function load_credential(consumer_id)
   -- Only HS256 is now supported, probably easy to add more if needed
-  local rows, err = singletons.dao.jwt_secrets:find_all {consumer_id = consumer_id, algorithm = "HS256"}
+  local rows, err = kong.db.jwt_secrets:select_by_key(consumer_id)
   if err then
     return nil, err
   end
@@ -41,13 +42,13 @@ function JwtCrafter:access(config)
   if ngx.ctx.authenticated_credential then
     consumer_id = ngx.ctx.authenticated_credential.consumer_id
   else
-    return responses.send_HTTP_FORBIDDEN("Cannot identify the consumer, add an authentication plugin to generate JWT token")
+    return kong.response.exit(500, { message = "Cannot identify the consumer, add an authentication plugin to generate JWT token" })
   end
 
   local acls, err = fetch_acls(consumer_id)
 
   if err then
-    return responses.send_HTTP_INTERNAL_SERVER_ERROR(err)
+    return kong.response.exit(500, { message = err })
   end
   if not acls then acls = {} end
 
@@ -61,10 +62,10 @@ function JwtCrafter:access(config)
   local credential, err = load_credential(consumer_id)
 
   if err then
-    return responses.send_HTTP_INTERNAL_SERVER_ERROR(err)
+    return kong.response.exit(500, { message = err })
   end
   if not credential then
-    return responses.send_HTTP_FORBIDDEN("Consumer has no JWT credential, cannot craft token")
+    return kong.response.exit(500, { message = "Consumer has no JWT credential, cannot craft token" })
   end
 
   -- Hooray, create the token finally
